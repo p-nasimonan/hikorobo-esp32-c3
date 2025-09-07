@@ -1,9 +1,11 @@
 #include "gyro_controller.h"
 
-GyroController::GyroController(int sda_pin, int scl_pin, int switch_pin) {
+GyroController::GyroController(int sda_pin, int scl_pin, int switch_pin, SensorType sensor_type) : lsm6ds3trc(), mpu6050() {
     sdaPin = sda_pin;
     sclPin = scl_pin;
     switchPin = switch_pin;
+    sensorType = sensor_type;
+    imuSensor = nullptr;
     initialized = false;
     gyroEnabled = false;  // 初期状態はパススルー
     bufferIndex = 0;
@@ -21,26 +23,31 @@ GyroController::GyroController(int sda_pin, int scl_pin, int switch_pin) {
 }
 
 void GyroController::begin() {
-    // I2C初期化
-    Wire.begin(sdaPin, sclPin);
-    Serial.println("I2C初期化完了");
+    Serial.println("IMUセンサー初期化中...");
     
     // スイッチピン初期化
     pinMode(switchPin, INPUT);
     Serial.println("切り替えスイッチ初期化完了");
     
-    // LSM6DS3センサー初期化
-    if (!IMU.begin()) {
-        Serial.println("ジャイロセンサー初期化失敗 - パススルーモード");
+    // センサー自動検出・初期化
+    if (!detectAndInitializeSensor()) {
+        Serial.println("IMUセンサー初期化失敗 - パススルーモード");
         initialized = false;
         return;
     }
     
-    Serial.println("LSM6DS3センサー初期化完了");
+    Serial.print("使用センサー: ");
+    Serial.println(imuSensor->getSensorName());
+    
+    // I2C速度を400kHzに設定
+    Wire.setClock(I2C_CLOCK);
+    Serial.print("I2C速度: ");
+    Serial.print(I2C_CLOCK);
+    Serial.println("Hz");
     
     // キャリブレーション実行
     Serial.println("キャリブレーション開始...");
-    calibrate(100);  // サンプル数を減らす
+    calibrate(30);  // 30サンプルで高速化
     Serial.println("キャリブレーション完了");
     
     initialized = true;
@@ -55,16 +62,14 @@ void GyroController::update() {
     }
     
     // センサーデータ読み取り
-    if (IMU.gyroscopeAvailable()) {
-        IMU.readGyroscope(gyroX, gyroY, gyroZ);
-        gyroX = applyMovingAverage(gyroXBuffer, gyroX);
-        gyroY = applyMovingAverage(gyroYBuffer, gyroY);
-        gyroZ = applyMovingAverage(gyroZBuffer, gyroZ);
-    }
+    imuSensor->readSensorData();
+    gyroX = applyMovingAverage(gyroXBuffer, imuSensor->getGyroX());
+    gyroY = applyMovingAverage(gyroYBuffer, imuSensor->getGyroY());
+    gyroZ = applyMovingAverage(gyroZBuffer, imuSensor->getGyroZ());
     
-    if (IMU.accelerationAvailable()) {
-        IMU.readAcceleration(accelX, accelY, accelZ);
-    }
+    accelX = imuSensor->getAccelX();
+    accelY = imuSensor->getAccelY();
+    accelZ = imuSensor->getAccelZ();
     
     // ノイズ閾値以下の値はゼロに
     if (abs(gyroX) < GYRO_THRESHOLD) gyroX = 0.0;
@@ -170,10 +175,12 @@ void GyroController::calibrate(int samples) {
     Serial.println("キャリブレーション中...");
     
     for (int i = 0; i < samples; i++) {
-        float x, y, z;
-        if (IMU.gyroscopeAvailable()) {
-            IMU.readGyroscope(x, y, z);
-        }
+        // IMUセンサーからデータ読み取り
+        imuSensor->readSensorData();
+        float gx = imuSensor->getGyroX();
+        float gy = imuSensor->getGyroY(); 
+        float gz = imuSensor->getGyroZ();
+        (void)gx; (void)gy; (void)gz;  // 未使用警告を抑制
         delay(10);
         
         if (i % 25 == 0) {
@@ -196,4 +203,64 @@ float GyroController::applyMovingAverage(float* buffer, float newValue) {
     }
     
     return sum / FILTER_SIZE;
+}
+
+bool GyroController::detectAndInitializeSensor() {
+    // 指定されたセンサータイプを試す
+    if (sensorType == SENSOR_LSM6DS3TRC) {
+        Serial.println("LSM6DS3TRC指定 - 初期化中...");
+        if (lsm6ds3trc.begin()) {
+            imuSensor = &lsm6ds3trc;
+            return true;
+        }
+        return false;
+    }
+    
+    if (sensorType == SENSOR_MPU6050) {
+        Serial.println("MPU6050指定 - 初期化中...");
+        // MPU6050用にI2C速度を調整
+        Wire.setClock(100000);  // 100kHz
+        delay(10);
+        if (mpu6050.begin()) {
+            imuSensor = &mpu6050;
+            return true;
+        }
+        return false;
+    }
+    
+    // 自動検出モード
+    Serial.println("センサー自動検出中...");
+    
+    // 最初にMPU6050を試す（より一般的）
+    Serial.println("MPU6050を試行中...");
+    // MPU6050用にI2C速度を調整
+    Wire.setClock(100000);  // 100kHz
+    delay(10);
+    if (mpu6050.begin()) {
+        imuSensor = &mpu6050;
+        sensorType = SENSOR_MPU6050;
+        return true;
+    }
+    
+    // 次にLSM6DS3TRCを試す
+    Serial.println("LSM6DS3TRCを試行中...");
+    if (lsm6ds3trc.begin()) {
+        imuSensor = &lsm6ds3trc;
+        sensorType = SENSOR_LSM6DS3TRC;
+        return true;
+    }
+    
+    Serial.println("対応するセンサーが見つかりません");
+    return false;
+}
+
+const char* GyroController::getSensorName() {
+    if (imuSensor) {
+        return imuSensor->getSensorName();
+    }
+    return "Unknown";
+}
+
+SensorType GyroController::getSensorType() {
+    return sensorType;
 }

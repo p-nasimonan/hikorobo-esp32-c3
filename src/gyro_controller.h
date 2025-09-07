@@ -3,15 +3,27 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <Arduino_LSM6DS3.h>
+#include "imu_sensor.h"
+#include "lsm6ds3trc.h"
+#include "mpu6050_wrapper.h"
 
 class GyroController {
 private:
     int sdaPin;
     int sclPin;
     int switchPin;  // パススルー/補正切り替えピン
+    uint8_t i2cAddress;  // LSM6DS3のI2Cアドレス
     bool initialized;
     bool gyroEnabled;  // ジャイロ補正のON/OFF状態
+    IMUSensor* imuSensor;  // 共通インターフェース
+    SensorType sensorType; // 使用するセンサータイプ
+    
+    // センサーインスタンス
+    LSM6DS3TRC lsm6ds3trc;
+    MPU6050Wrapper mpu6050;
+    
+    // I2C設定
+    static constexpr uint32_t I2C_CLOCK = 400000;  // 400kHz固定
     
     // センサー値のフィルタリング用
     static const int FILTER_SIZE = 5;
@@ -32,9 +44,10 @@ private:
     // フィルタリング関数
     float applyMovingAverage(float* buffer, float newValue);
     void updateSwitchState();  // スイッチ状態更新
+    bool detectAndInitializeSensor();  // センサー自動検出・初期化
     
 public:
-    GyroController(int sda_pin, int scl_pin, int switch_pin);
+    GyroController(int sda_pin, int scl_pin, int switch_pin, SensorType sensor_type = SENSOR_AUTO_DETECT);
     void begin();
     void update();
     bool isInitialized();
@@ -53,6 +66,10 @@ public:
     
     // キャリブレーション関数
     void calibrate(int samples = 100);
+    
+    // センサー情報取得
+    const char* getSensorName();
+    SensorType getSensorType();
 };
 
 #endif
