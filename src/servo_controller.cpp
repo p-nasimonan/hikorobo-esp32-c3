@@ -1,9 +1,12 @@
 #include "servo_controller.h"
+#include "gyro_controller.h"
 
-ServoController::ServoController(int input_pin, int output_pin, String servo_name) {
+ServoController::ServoController(int input_pin, int output_pin, String servo_name, String axis_name) {
     inputPin = input_pin;
     outputPin = output_pin;
     name = servo_name;
+    axis = axis_name;
+    gyroController = nullptr;  // 初期化時はnullptr
 }
 
 void ServoController::begin() {
@@ -11,7 +14,7 @@ void ServoController::begin() {
     servo.attach(outputPin);
     centerServo();  // 中央位置に設定
     Serial.print(name);
-    Serial.println(" Controller 初期化完了 - 中央位置に設定");
+    Serial.println(" 初期化完了");
 }
 
 void ServoController::update() {
@@ -21,23 +24,17 @@ void ServoController::update() {
     if (servoPulse > 0) {
         int angle = processSignal(servoPulse);
         setServoAngle(angle);
-        Serial.print(name);
-        Serial.print(" - 信号: ");
-        Serial.print(servoPulse);
-        Serial.print(" μs, 角度: ");
-        Serial.println(angle);
     } else {
         // 信号なしの場合は中央位置
         centerServo();
-        Serial.print(name);
-        Serial.println(" 信号なし - 中央位置");
     }
 }
 
+void ServoController::setGyroController(GyroController* gyro) {
+    gyroController = gyro;
+}
+
 int ServoController::processSignal(unsigned long pulseWidth) {
-    // 将来のジャイロ補正処理をここに追加予定
-    // 現在はパススルー処理
-    
     int angle;
     if (pulseWidth < RC_MIN) {
         angle = SERVO_MIN;
@@ -46,6 +43,11 @@ int ServoController::processSignal(unsigned long pulseWidth) {
     } else {
         // 線形変換: RC_MIN-RC_MAX → SERVO_MIN-SERVO_MAX
         angle = map(pulseWidth, RC_MIN, RC_MAX, SERVO_MIN, SERVO_MAX);
+    }
+    
+    // ジャイロ補正を適用（有効な場合のみ）
+    if (gyroController != nullptr && gyroController->isInitialized() && gyroController->isGyroEnabled()) {
+        angle = gyroController->applyGyroCorrection(angle, axis);
     }
     
     return angle;

@@ -19,14 +19,9 @@ void LedController::update() {
     if (ledPulse > 0) {
         bool ledState = processSignal(ledPulse);
         setLedState(ledState);
-        Serial.print("LED制御 - 信号: ");
-        Serial.print(ledPulse);
-        Serial.print(" μs, 状態: ");
-        Serial.println(ledState ? "ON" : "OFF");
     } else {
         // 信号なしの場合はLED OFF
         setLedState(false);
-        Serial.println("LED信号なし - OFF");
     }
 }
 

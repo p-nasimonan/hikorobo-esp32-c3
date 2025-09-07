@@ -16,13 +16,13 @@ const int LED_OUTPUT_PIN = 0;       // LED出力ピン
 
 // コントローラーオブジェクト
 LedController ledController(LED_INPUT_PIN, LED_OUTPUT_PIN);
-ServoController elevatorController(ELEVATOR_INPUT_PIN, ELEVATOR_SERVO_PIN, "エレベーター");
-ServoController rudderController(RUDDER_INPUT_PIN, RUDDER_SERVO_PIN, "ラダー");
-GyroController gyroController(SDA_PIN, SCL_PIN);
+ServoController elevatorController(ELEVATOR_INPUT_PIN, ELEVATOR_SERVO_PIN, "エレベーター", "elevator");
+ServoController rudderController(RUDDER_INPUT_PIN, RUDDER_SERVO_PIN, "ラダー", "rudder");
+GyroController gyroController(SDA_PIN, SCL_PIN, LED_INPUT_PIN);  // LEDピンをスイッチとしても使用
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("ESP32-C3 ラジコン信号受信とサーボ制御を開始します");
+  Serial.println("ESP32-C3 ラジコン制御システム開始");
   
   // 各コントローラーの初期化
   gyroController.begin();
@@ -30,7 +30,12 @@ void setup() {
   elevatorController.begin();
   rudderController.begin();
   
-  Serial.println("全コントローラー初期化完了");
+  // ジャイロコントローラーをサーボコントローラーに設定
+  elevatorController.setGyroController(&gyroController);
+  rudderController.setGyroController(&gyroController);
+  
+  Serial.println("初期化完了");
+  Serial.println("LEDスイッチでジャイロ補正ON/OFF切り替え");
 }
 
 void loop() {
