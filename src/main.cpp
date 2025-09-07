@@ -1,63 +1,46 @@
 #include <Arduino.h>
+#include "led_controller.h"
+#include "servo_controller.h"
+#include "gyro_controller.h"
 
 // ピンの定義
-const int RC_INPUT_PIN = 0;    // ラジコン受信機の信号線
-const int LED_PIN = 1;         // LED接続ピン（ESP32の内蔵LED）
+const int SDA_PIN = 5;         // I2C SDA (ジャイロセンサー用)
+const int SCL_PIN = 6;         // I2C SCL (ジャイロセンサー用)
 
-// PWM設定
-const int PWM_CHANNEL = 0;
-const int PWM_FREQUENCY = 5000;  // 5kHz
-const int PWM_RESOLUTION = 8;    // 8ビット解像度（0-255）
+const int ELEVATOR_INPUT_PIN = 1;   // エレベーター受信ピン
+const int ELEVATOR_SERVO_PIN = 2;   // エレベーターサーボピン
+const int RUDDER_INPUT_PIN = 21;    // ラダー受信ピン
+const int RUDDER_SERVO_PIN = 20;    // ラダーサーボピン
+const int LED_INPUT_PIN = 4;        // LED制御信号受信ピン
+const int LED_OUTPUT_PIN = 0;       // LED出力ピン
 
-// 信号の範囲設定
-const int RC_MIN = 1000;  // ラジコン信号の最小値（マイクロ秒）
-const int RC_MAX = 2000;  // ラジコン信号の最大値（マイクロ秒）
+// コントローラーオブジェクト
+LedController ledController(LED_INPUT_PIN, LED_OUTPUT_PIN);
+ServoController elevatorController(ELEVATOR_INPUT_PIN, ELEVATOR_SERVO_PIN, "エレベーター");
+ServoController rudderController(RUDDER_INPUT_PIN, RUDDER_SERVO_PIN, "ラダー");
+GyroController gyroController(SDA_PIN, SCL_PIN);
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("ラジコン信号読み取りとLED制御を開始します");
+  Serial.println("ESP32-C3 ラジコン信号受信とサーボ制御を開始します");
   
-  // 受信機信号ピンを入力に設定
-  pinMode(RC_INPUT_PIN, INPUT);
+  // 各コントローラーの初期化
+  gyroController.begin();
+  ledController.begin();
+  elevatorController.begin();
+  rudderController.begin();
   
-  // LEDピンをPWM出力に設定
-  ledcSetup(PWM_CHANNEL, PWM_FREQUENCY, PWM_RESOLUTION);
-  ledcAttachPin(LED_PIN, PWM_CHANNEL);
-  
-  Serial.println("セットアップ完了");
+  Serial.println("全コントローラー初期化完了");
 }
 
 void loop() {
-  // ラジコン受信機からのPWM信号を読み取り（マイクロ秒）
-  unsigned long pulseWidth = pulseIn(RC_INPUT_PIN, HIGH, 25000);  // タイムアウト25ms
+  // ジャイロセンサーの更新
+  gyroController.update();
   
-  if (pulseWidth > 0) {
-    // 信号が有効な場合
-    Serial.print("受信信号: ");
-    Serial.print(pulseWidth);
-    Serial.println(" μs");
-    
-    // PWM信号をLEDの明るさに変換（0-255）
-    int ledBrightness;
-    if (pulseWidth < RC_MIN) {
-      ledBrightness = 0;
-    } else if (pulseWidth > RC_MAX) {
-      ledBrightness = 255;
-    } else {
-      // 線形変換: RC_MIN-RC_MAX → 0-255
-      ledBrightness = map(pulseWidth, RC_MIN, RC_MAX, 0, 255);
-    }
-    
-    // LEDの明るさを設定
-    ledcWrite(PWM_CHANNEL, ledBrightness);
-    
-    Serial.print("LED明るさ: ");
-    Serial.println(ledBrightness);
-  } else {
-    // 信号が読み取れない場合はLEDを消灯
-    ledcWrite(PWM_CHANNEL, 0);
-    Serial.println("信号なし - LED消灯");
-  }
+  // 各コントローラーの更新
+  elevatorController.update();
+  rudderController.update();
+  ledController.update();
   
-  delay(50);  // 50ms待機
+  delay(20);  // 50Hz更新レート（サーボ制御に適した頻度）
 }
