@@ -5,14 +5,15 @@
 #include "servo_output.h"
 #include "led_output.h"
 #include "display_controller.h"
+#include "auto_control.h"
 
 // ピン定義
 const int SDA_PIN = 5;         // I2C SDA
 const int SCL_PIN = 6;         // I2C SCL
-const int ELEVATOR_INPUT_PIN = 1;   // エレベーター受信ピン
-const int ELEVATOR_SERVO_PIN = 2;   // エレベーターサーボピン
-const int RUDDER_INPUT_PIN = 21;    // ラダー受信ピン
-const int RUDDER_SERVO_PIN = 20;    // ラダーサーボピン
+const int ELEVATOR_INPUT_PIN = 21;   // エレベーター受信ピン
+const int ELEVATOR_SERVO_PIN = 20;   // エレベーターサーボピン
+const int RUDDER_INPUT_PIN = 1;    // ラダー受信ピン
+const int RUDDER_SERVO_PIN = 2;    // ラダーサーボピン
 const int LED_INPUT_PIN = 4;        // LED制御信号受信ピン
 const int LED_OUTPUT_PIN = 0;       // LED出力ピン
 
@@ -23,6 +24,11 @@ ServoOutput elevatorServo(ELEVATOR_SERVO_PIN, "エレベーター");
 ServoOutput rudderServo(RUDDER_SERVO_PIN, "ラダー");
 LedOutput ledOutput(LED_OUTPUT_PIN);
 DisplayController displayController(SDA_PIN, SCL_PIN);
+AutoControl autoControl;
+
+// 制御モード管理
+bool mpu6050Available = false;
+bool previousPassthroughMode = true;  // 前回のパススルーモード状態
 
 void setup() {
   Serial.begin(115200);
@@ -56,9 +62,15 @@ void setup() {
   if (mpu6050Found) {
     mpu6050.begin();
     mpu6050.calcGyroOffsets(true);
+    mpu6050Available = true;
     Serial.println("MPU6050 OK");
+    
+    // 自動制御システム初期化
+    autoControl.begin();
+    autoControl.setTargets(0, 0, 0);  // 水平飛行目標
   } else {
     Serial.println("MPU6050 Error - Passthrough only");
+    mpu6050Available = false;
   }
   
   // 各コントローラーの初期化
@@ -78,52 +90,97 @@ void loop() {
   // LED制御処理（パススルーモードの時オン、姿勢制御の時オフ）
   ledOutput.setState(isPassthrough);
   
-
-  // // ディスプレイ更新（パススルーモード時は頻度を下げる）
-  // static unsigned long lastDisplayUpdate = 0;
-  // unsigned long displayInterval = isPassthrough ? 2000 : 500;  // パススルー時は2000ms、姿勢制御時は500ms
+  // デバッグ出力用
+  static unsigned long lastDebugTime = 0;
+  static unsigned long lastControlTime = 0;
   
+  // 制御モード切り替わりを検出
+  bool modeChanged = (isPassthrough != previousPassthroughMode);
   
-  // 姿勢制御モードの場合のみジャイロ処理を実行
-  if (!isPassthrough) {
-    // データ更新
+  // 制御モード（姿勢制御）
+  if (!isPassthrough && mpu6050Available) {
+    // MPU6050データ更新
     mpu6050.update();
     
-    // データ取得
-    float gyroX = mpu6050.getGyroX();
-    float gyroY = mpu6050.getGyroY();
-    float gyroZ = mpu6050.getGyroZ();
+    // 自動制御システム更新
+    autoControl.update(mpu6050);
     
-    float accX = mpu6050.getAccX();
-    float accY = mpu6050.getAccY();
-    float accZ = mpu6050.getAccZ();
+    // パススルーから制御モードに切り替わった瞬間
+    if (modeChanged && previousPassthroughMode) {
+      // 現在の姿勢を目標値として設定
+      float currentPitch = autoControl.getCurrentPitch();
+      float currentRoll = autoControl.getCurrentRoll();
+      float currentYaw = autoControl.getCurrentYaw();
+      
+      autoControl.setTargets(currentPitch, currentRoll, currentYaw);
+      Serial.println("Auto Control ON - Holding current attitude:");
+      Serial.print("Target Pitch: "); Serial.println(currentPitch, 2);
+      Serial.print("Target Roll: "); Serial.println(currentRoll, 2);
+      Serial.print("Target Yaw: "); Serial.println(currentYaw, 2);
+    }
     
-    float temp = mpu6050.getTemp();
-
-
-  //   if (millis() - lastDisplayUpdate > displayInterval) {
-  //     displayController.updateDisplayWithGyroData(
-  //         gyroX, gyroY, 
-  //         gyroZ, temp);
-  //     lastDisplayUpdate = millis();
-  //     }
-  }else{
-
-  // RC受信機からの入力を取得
-  float elevatorInput = rcReceiver.getElevatorValue();
-  float rudderInput = rcReceiver.getRudderValue();
-  
-  float elevatorOutput = elevatorInput;
-  float rudderOutput = rudderInput;
+    // RC受信機からの目標値を取得（微調整用）
+    float elevatorInput = rcReceiver.getElevatorValue();
+    float rudderInput = rcReceiver.getRudderValue();
     
-  // サーボに出力
-  elevatorServo.writeValue(elevatorOutput);
-  rudderServo.writeValue(rudderOutput);
-  
-
-  // if (millis() - lastDisplayUpdate > displayInterval) {
-  //   displayController.updateDisplay();
-  //   lastDisplayUpdate = millis();
-  // }
+    // RC入力による目標角度の微調整（現在の目標値からのオフセット）
+    static float basePitchTarget = 0;
+    static float baseYawTarget = 0;
+    
+    // モード切り替わり時にベース目標値を更新
+    if (modeChanged && previousPassthroughMode) {
+      basePitchTarget = autoControl.getCurrentPitch();
+      baseYawTarget = autoControl.getCurrentYaw();
+    }
+    
+    float pitchTarget = basePitchTarget + (elevatorInput * 0.1);  // ±10度程度の微調整
+    float yawTarget = baseYawTarget + (rudderInput * 0.1);       // ±10度程度の微調整
+    autoControl.setTargets(pitchTarget, 0, yawTarget);
+    
+    // PID制御出力を取得
+    float elevatorControl = autoControl.getElevatorOutput();
+    float rudderControl = autoControl.getRudderOutput();
+    
+    // RC入力と制御出力を混合
+    float elevatorOutput = elevatorInput + elevatorControl;
+    float rudderOutput = rudderInput + rudderControl;
+    
+    // 出力制限
+    elevatorOutput = constrain(elevatorOutput, -100, 100);
+    rudderOutput = constrain(rudderOutput, -100, 100);
+    
+    // サーボに出力
+    elevatorServo.writeValue(elevatorOutput);
+    rudderServo.writeValue(rudderOutput);
+    
+    // デバッグ出力（1秒毎）
+    if (millis() - lastDebugTime > 1000) {
+      autoControl.printDebugInfo();
+      Serial.print("Control: E=");
+      Serial.print(elevatorOutput, 1);
+      Serial.print(" R=");
+      Serial.println(rudderOutput, 1);
+      lastDebugTime = millis();
+    }
+    delay(1);  // 10Hz制御ループ
+  } else {
+    // パススルーモード
+    
+    // RC受信機からの入力をそのまま出力
+    float elevatorInput = rcReceiver.getElevatorValue();
+    float rudderInput = rcReceiver.getRudderValue();
+    
+    elevatorServo.writeValue(elevatorInput);
+    rudderServo.writeValue(rudderInput);
+    
+    // 制御システムをリセット
+    if (mpu6050Available) {
+      autoControl.reset();
+    }
   }
+  
+  // 前回のモード状態を更新
+  previousPassthroughMode = isPassthrough;
+  
+  delay(10);  // 100Hz制御ループ
 }
