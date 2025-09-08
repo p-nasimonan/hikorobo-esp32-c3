@@ -1,20 +1,14 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include "led_controller.h"
-#include "servo_controller.h"
-#include "gyro_controller.h"
+#include <MPU6050_tockn.h>
+#include "rc_receiver.h"
+#include "servo_output.h"
+#include "led_output.h"
 #include "display_controller.h"
 
-// センサー選択 (以下の中から選択)
-// SENSOR_AUTO_DETECT: 自動検出 (推奨)
-// SENSOR_MPU6050: MPU6050を強制使用
-// SENSOR_LSM6DS3TRC: LSM6DS3TRCを強制使用
-#define SENSOR_TYPE SENSOR_AUTO_DETECT
-
-// ピンの定義
-const int SDA_PIN = 5;         // I2C SDA (ジャイロセンサー用)
-const int SCL_PIN = 6;         // I2C SCL (ジャイロセンサー用)
-
+// ピン定義
+const int SDA_PIN = 5;         // I2C SDA
+const int SCL_PIN = 6;         // I2C SCL
 const int ELEVATOR_INPUT_PIN = 1;   // エレベーター受信ピン
 const int ELEVATOR_SERVO_PIN = 2;   // エレベーターサーボピン
 const int RUDDER_INPUT_PIN = 21;    // ラダー受信ピン
@@ -22,88 +16,114 @@ const int RUDDER_SERVO_PIN = 20;    // ラダーサーボピン
 const int LED_INPUT_PIN = 4;        // LED制御信号受信ピン
 const int LED_OUTPUT_PIN = 0;       // LED出力ピン
 
-// コントローラーオブジェクト
-LedController ledController(LED_INPUT_PIN, LED_OUTPUT_PIN);
-ServoController elevatorController(ELEVATOR_INPUT_PIN, ELEVATOR_SERVO_PIN, "エレベーター", "elevator");
-ServoController rudderController(RUDDER_INPUT_PIN, RUDDER_SERVO_PIN, "ラダー", "rudder");
-GyroController gyroController(SDA_PIN, SCL_PIN, LED_INPUT_PIN, SENSOR_TYPE);  // センサータイプ指定
+// オブジェクト
+MPU6050 mpu6050(Wire);
+RCReceiver rcReceiver(ELEVATOR_INPUT_PIN, RUDDER_INPUT_PIN, LED_INPUT_PIN);
+ServoOutput elevatorServo(ELEVATOR_SERVO_PIN, "エレベーター");
+ServoOutput rudderServo(RUDDER_SERVO_PIN, "ラダー");
+LedOutput ledOutput(LED_OUTPUT_PIN);
 DisplayController displayController(SDA_PIN, SCL_PIN);
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);  // シリアル初期化待機
-  Serial.println("ESP32-C3 ラジコン制御システム開始");
+  delay(500);
+  Serial.println("ESP32-C3 RC System Start");
   
   // I2C初期化（ジャイロとディスプレイ共用）
   Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(400000);  // 最初から400kHzで開始
-  Serial.println("I2C初期化完了 (400kHz)");
-  delay(500);  // I2C安定化待機
+  Wire.setClock(400000);  // 400kHz
+  delay(700);
   
-  // I2Cデバイススキャン
-  Serial.println("I2Cデバイススキャン開始...");
-  int deviceCount = 0;
-  for (byte address = 1; address < 127; address++) {
-    Wire.beginTransmission(address);
-    byte error = Wire.endTransmission();
-    
-    if (error == 0) {
-      Serial.print("I2Cデバイス発見: 0x");
-      if (address < 16) Serial.print("0");
-      Serial.println(address, HEX);
-      deviceCount++;
-      
-      if (address == 0x6A) {
-        Serial.println("  -> LSM6DS3TR-C (Primary)");
-      } else if (address == 0x6B) {
-        Serial.println("  -> LSM6DS3TR-C (Secondary)");
-      } else if (address == 0x3C || address == 0x3D) {
-        Serial.println("  -> SSD1306 ディスプレイ");
-      }
+  // MPU6050初期化（エラーハンドリング付き）
+  bool mpu6050Found = false;
+  
+  // 0x68をチェック
+  Wire.beginTransmission(0x68);
+  if (Wire.endTransmission() == 0) {
+    mpu6050Found = true;
+    Serial.println("MPU6050 found at 0x68");
+  }
+  
+  // 0x68で見つからなかった場合、0x69をチェック
+  if (!mpu6050Found) {
+    Wire.beginTransmission(0x69);
+    if (Wire.endTransmission() == 0) {
+      mpu6050Found = true;
+      Serial.println("MPU6050 found at 0x69");
     }
   }
   
-  if (deviceCount == 0) {
-    Serial.println("I2Cデバイスが見つかりません");
+  if (mpu6050Found) {
+    mpu6050.begin();
+    mpu6050.calcGyroOffsets(true);
+    Serial.println("MPU6050 OK");
   } else {
-    Serial.print("合計 ");
-    Serial.print(deviceCount);
-    Serial.println(" 個のデバイスが見つかりました");
+    Serial.println("MPU6050 Error - Passthrough only");
   }
   
-  // 各コントローラーの初期化（順序重要）
-  Serial.println("ディスプレイ初期化中...");
-  displayController.begin();
-  delay(100);  // 短縮
+  // 各コントローラーの初期化
+  // displayController.begin();
+  ledOutput.begin();
+  rcReceiver.begin();
+  elevatorServo.begin();
+  rudderServo.begin();
   
-  Serial.println("ジャイロセンサー初期化中...");
-  gyroController.begin();  // 400kHz固定で初期化
-  delay(100);  // 短縮
-  
-  ledController.begin();
-  elevatorController.begin();
-  rudderController.begin();
-  
-  // ジャイロコントローラーを各コントローラーに設定
-  elevatorController.setGyroController(&gyroController);
-  rudderController.setGyroController(&gyroController);
-  displayController.setGyroController(&gyroController);
-  
-  Serial.println("初期化完了");
-  Serial.println("LEDスイッチでジャイロ補正ON/OFF切り替え");
+  Serial.println("System Ready");
 }
 
 void loop() {
-  // ジャイロセンサーの更新
-  gyroController.update();
+  // RC受信機の状態を確認（最初に判定）
+  bool isPassthrough = rcReceiver.isPassthroughMode();
   
-  // 各コントローラーの更新
-  elevatorController.update();
-  rudderController.update();
-  ledController.update();
+  // LED制御処理（パススルーモードの時オン、姿勢制御の時オフ）
+  ledOutput.setState(isPassthrough);
   
-  // ディスプレイ更新
-  displayController.update();
+
+  // // ディスプレイ更新（パススルーモード時は頻度を下げる）
+  // static unsigned long lastDisplayUpdate = 0;
+  // unsigned long displayInterval = isPassthrough ? 2000 : 500;  // パススルー時は2000ms、姿勢制御時は500ms
   
-  delay(20);  // 50Hz更新レート（サーボ制御に適した頻度）
+  
+  // 姿勢制御モードの場合のみジャイロ処理を実行
+  if (!isPassthrough) {
+    // データ更新
+    mpu6050.update();
+    
+    // データ取得
+    float gyroX = mpu6050.getGyroX();
+    float gyroY = mpu6050.getGyroY();
+    float gyroZ = mpu6050.getGyroZ();
+    
+    float accX = mpu6050.getAccX();
+    float accY = mpu6050.getAccY();
+    float accZ = mpu6050.getAccZ();
+    
+    float temp = mpu6050.getTemp();
+
+
+  //   if (millis() - lastDisplayUpdate > displayInterval) {
+  //     displayController.updateDisplayWithGyroData(
+  //         gyroX, gyroY, 
+  //         gyroZ, temp);
+  //     lastDisplayUpdate = millis();
+  //     }
+  }else{
+
+  // RC受信機からの入力を取得
+  float elevatorInput = rcReceiver.getElevatorValue();
+  float rudderInput = rcReceiver.getRudderValue();
+  
+  float elevatorOutput = elevatorInput;
+  float rudderOutput = rudderInput;
+    
+  // サーボに出力
+  elevatorServo.writeValue(elevatorOutput);
+  rudderServo.writeValue(rudderOutput);
+  
+
+  // if (millis() - lastDisplayUpdate > displayInterval) {
+  //   displayController.updateDisplay();
+  //   lastDisplayUpdate = millis();
+  // }
+  }
 }
