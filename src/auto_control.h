@@ -1,6 +1,10 @@
 #ifndef AUTO_CONTROL_H
 #define AUTO_CONTROL_H
 
+// 制御モード選択（どちらか一つをコメントアウト）
+#define USE_ANGLE_CONTROL     // 角度制御モード
+// #define USE_ACCEL_CONTROL     // 加速度制御モード
+
 #include "pid_controller.h"
 #include <MPU6050_tockn.h>
 
@@ -15,10 +19,24 @@ private:
     float targetRoll;
     float targetYaw;
     
+#ifdef USE_ANGLE_CONTROL
     // 現在の角度（積分により計算）
     float currentPitch;
     float currentRoll;
     float currentYaw;
+#endif
+
+#ifdef USE_ACCEL_CONTROL
+    // 目標加速度
+    float targetAccelX;
+    float targetAccelY;
+    float targetAccelZ;
+    
+    // 現在の加速度
+    float currentAccelX;
+    float currentAccelY;
+    float currentAccelZ;
+#endif
     
     // 角度積分用
     unsigned long lastUpdateTime;
@@ -39,10 +57,19 @@ public:
     void begin();
     
     // 目標値設定
+#ifdef USE_ANGLE_CONTROL
     void setTargets(float pitch, float roll, float yaw);
     void setTargetPitch(float pitch) { targetPitch = pitch; }
     void setTargetRoll(float roll) { targetRoll = roll; }
     void setTargetYaw(float yaw) { targetYaw = yaw; }
+#endif
+
+#ifdef USE_ACCEL_CONTROL
+    void setAccelTargets(float accelX, float accelY, float accelZ);
+    void setTargetAccelX(float accelX) { targetAccelX = accelX; }
+    void setTargetAccelY(float accelY) { targetAccelY = accelY; }
+    void setTargetAccelZ(float accelZ) { targetAccelZ = accelZ; }
+#endif
     
     // 制御実行
     void update(MPU6050& mpu);
@@ -60,10 +87,19 @@ public:
     // 制御有効/無効
     void enableControl(bool pitch, bool roll, bool yaw);
     
+#ifdef USE_ANGLE_CONTROL
     // 現在の角度取得
     float getCurrentPitch() const { return currentPitch; }
     float getCurrentRoll() const { return currentRoll; }
     float getCurrentYaw() const { return currentYaw; }
+#endif
+
+#ifdef USE_ACCEL_CONTROL
+    // 現在の加速度取得
+    float getCurrentAccelX() const { return currentAccelX; }
+    float getCurrentAccelY() const { return currentAccelY; }
+    float getCurrentAccelZ() const { return currentAccelZ; }
+#endif
     
     // デバッグ情報
     void printDebugInfo();

@@ -107,6 +107,7 @@ void loop() {
     
     // パススルーから制御モードに切り替わった瞬間
     if (modeChanged && previousPassthroughMode) {
+#ifdef USE_ANGLE_CONTROL
       // 現在の姿勢を目標値として設定
       float currentPitch = autoControl.getCurrentPitch();
       float currentRoll = autoControl.getCurrentRoll();
@@ -117,12 +118,26 @@ void loop() {
       Serial.print("Target Pitch: "); Serial.println(currentPitch, 2);
       Serial.print("Target Roll: "); Serial.println(currentRoll, 2);
       Serial.print("Target Yaw: "); Serial.println(currentYaw, 2);
+#endif
+#ifdef USE_ACCEL_CONTROL
+      // 現在の加速度を目標値として設定
+      float currentAccelX = autoControl.getCurrentAccelX();
+      float currentAccelY = autoControl.getCurrentAccelY();
+      float currentAccelZ = autoControl.getCurrentAccelZ();
+      
+      autoControl.setAccelTargets(currentAccelX, currentAccelY, currentAccelZ);
+      Serial.println("Auto Control ON - Holding current acceleration:");
+      Serial.print("Target AccelX: "); Serial.println(currentAccelX, 3);
+      Serial.print("Target AccelY: "); Serial.println(currentAccelY, 3);
+      Serial.print("Target AccelZ: "); Serial.println(currentAccelZ, 3);
+#endif
     }
     
     // RC受信機からの目標値を取得（微調整用）
     float elevatorInput = rcReceiver.getElevatorValue();
     float rudderInput = rcReceiver.getRudderValue();
     
+#ifdef USE_ANGLE_CONTROL
     // RC入力による目標角度の微調整（現在の目標値からのオフセット）
     static float basePitchTarget = 0;
     static float baseYawTarget = 0;
@@ -133,9 +148,26 @@ void loop() {
       baseYawTarget = autoControl.getCurrentYaw();
     }
     
-    float pitchTarget = basePitchTarget + (elevatorInput * 0.1);  // ±10度程度の微調整
-    float yawTarget = baseYawTarget + (rudderInput * 0.1);       // ±10度程度の微調整
+    float pitchTarget = basePitchTarget + (elevatorInput * 0.05);  // ±5度程度の微調整
+    float yawTarget = baseYawTarget + (rudderInput * 0.05);       // ±5度程度の微調整
     autoControl.setTargets(pitchTarget, 0, yawTarget);
+#endif
+
+#ifdef USE_ACCEL_CONTROL
+    // RC入力による目標加速度の微調整
+    static float baseAccelXTarget = 0;
+    static float baseAccelZTarget = -1.0;  // 重力分
+    
+    // モード切り替わり時にベース目標値を更新
+    if (modeChanged && previousPassthroughMode) {
+      baseAccelXTarget = autoControl.getCurrentAccelX();
+      baseAccelZTarget = autoControl.getCurrentAccelZ();
+    }
+    
+    float accelXTarget = baseAccelXTarget + (elevatorInput * 0.01);  // 微調整
+    float accelZTarget = baseAccelZTarget + (rudderInput * 0.01);    // 微調整
+    autoControl.setAccelTargets(accelXTarget, 0, accelZTarget);
+#endif
     
     // PID制御出力を取得
     float elevatorControl = autoControl.getElevatorOutput();
@@ -162,7 +194,7 @@ void loop() {
       Serial.println(rudderOutput, 1);
       lastDebugTime = millis();
     }
-    delay(1);  // 10Hz制御ループ
+    delay(10);  // 100Hz制御ループ
   } else {
     // パススルーモード
     
@@ -181,6 +213,4 @@ void loop() {
   
   // 前回のモード状態を更新
   previousPassthroughMode = isPassthrough;
-  
-  delay(10);  // 100Hz制御ループ
 }
