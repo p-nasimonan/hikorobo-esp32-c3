@@ -10,10 +10,10 @@
 // ピン定義
 const int SDA_PIN = 5;         // I2C SDA
 const int SCL_PIN = 6;         // I2C SCL
-const int ELEVATOR_INPUT_PIN = 21;   // エレベーター受信ピン
-const int ELEVATOR_SERVO_PIN = 20;   // エレベーターサーボピン
+const int ELEVATOR_INPUT_PIN = 2;   // エレベーター受信ピン
+const int ELEVATOR_SERVO_PIN = 21;   // エレベーターサーボピン
 const int RUDDER_INPUT_PIN = 1;    // ラダー受信ピン
-const int RUDDER_SERVO_PIN = 2;    // ラダーサーボピン
+const int RUDDER_SERVO_PIN = 20;    // ラダーサーボピン
 const int LED_INPUT_PIN = 4;        // LED制御信号受信ピン
 const int LED_OUTPUT_PIN = 0;       // LED出力ピン
 
@@ -67,7 +67,6 @@ void setup() {
     
     // 自動制御システム初期化
     autoControl.begin();
-    autoControl.setTargets(0, 0, 0);  // 水平飛行目標
   } else {
     Serial.println("MPU6050 Error - Passthrough only");
     mpu6050Available = false;
