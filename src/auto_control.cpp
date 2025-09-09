@@ -1,15 +1,17 @@
 #include "auto_control.h"
 #include <Arduino.h>
 
-AutoControl::AutoControl() 
-    : pitchPID(1.0, 0.1, 0.05),    // PIDパラメータ（調整が必要）
-      rollPID(2.0, 0.1, 0.05),
-      yawPID(1.0, 0.1, 0.05),
-      targetPitch(0), targetRoll(0), targetYaw(0),
+AutoControl::AutoControl()
 #ifdef USE_ANGLE_CONTROL
+    : pitchPID(0.8, 0.5, 0.5),    // PIDパラメータ（調整が必要）
+      rollPID(2.0, 0.1, 0.05),
+      yawPID(0.8, 0.5, 0.5),
       currentPitch(0), currentRoll(0), currentYaw(0),
 #endif
 #ifdef USE_ACCEL_CONTROL
+    : pitchPID(2.0, 0.1, 0.05),    // PIDパラメータ（調整が必要）
+      rollPID(2.0, 0.1, 0.05),
+      yawPID(2.0, 0.1, 0.05),
       targetAccelX(0), targetAccelY(0), targetAccelZ(-1.0),  // Z軸は重力分
       currentAccelX(0), currentAccelY(0), currentAccelZ(-1.0),
 #endif
